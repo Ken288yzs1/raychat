@@ -1,1 +1,105 @@
+name: Docker Build and Push
 
+on:
+  workflow_dispatch:
+    inputs:
+      update_latest:
+        description: '是否更新 latest 标签'
+        required: true
+        type: boolean
+        default: false
+      upload_artifacts:
+        description: '是否上传构建产物'
+        required: true
+        type: boolean
+        default: true
+      version:
+        description: 'Version number (e.g., v1.2.3)'
+        required: true
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/raychat
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Set version
+        if: github.event_name == 'workflow_dispatch'
+        id: go_version
+        run: |
+          echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+
+      - name: Set version from tag
+        if: github.event_name == 'push'
+        id: tag_version  # 保持原样, 这样 push 的时候, 还是用 tag 作为版本号
+        run: |
+          echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3.3.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5.6.1
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && inputs.update_latest }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
+            type=raw,value=${{ steps.go_version.outputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }} # 更改这里
+            type=raw,value=${{ github.ref_name }},enable=${{ github.event_name == 'push' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.8.0
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6.11.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=local,dest=./dist,enable=${{ (github.event_name == 'workflow_dispatch' && inputs.upload_artifacts) || github.event_name == 'push'}}
+
+      - name: Prepare artifacts
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_artifacts
+        run: |
+          mkdir -p artifacts
+          cp dist/linux_amd64/app/raychat artifacts/raychat-x86_64-${{ steps.go_version.outputs.version }} # 更改这里
+          cp dist/linux_arm64/app/raychat artifacts/raychat-aarch64-${{ steps.go_version.outputs.version }} # 更改这里
+
+      - name: Prepare artifacts
+        if: github.event_name == 'push'
+        run: |
+          mkdir -p artifacts
+          cp dist/linux_amd64/app/raychat artifacts/raychat-x86_64-${{ github.ref_name }}
+          cp dist/linux_arm64/app/raychat artifacts/raychat-aarch64-${{ github.ref_name }}
+
+      - name: Upload artifacts
+        if: (github.event_name == 'workflow_dispatch' && inputs.upload_artifacts) || github.event_name == 'push'
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: raychat-binaries
+          path: artifacts/
+          retention-days: 7
