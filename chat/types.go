@@ -16,13 +16,29 @@ type UnTypedOpenAIMessage interface {
 }
 
 type OpenAIRequest struct {
-	Model        string                 `json:"model"`
-	Messages     []interface{}          `json:"messages"`
-	Stream       bool                   `json:"stream"`
-	Temperature  float64                `json:"temperature"`
-	SystemPrompt string                 `json:"system_prompt,omitempty"` // 新增字段
-	messages     []UnTypedOpenAIMessage `json:"-"`
+	Model       string                 `json:"model"`
+	Messages    []interface{}          `json:"messages"`
+	Stream      bool                   `json:"stream"`
+	Temperature float64                `json:"temperature"`
+	messages    []UnTypedOpenAIMessage `json:"-"`
 }
+
+// func (r OpenAIRequest) ToStrOpenAIRequest() OpenAIRequest[string] {
+// 	msgs := make([]OpenAIMessage[string], 0, len(r.Messages))
+// 	for _, m := range r.Messages {
+// 		tmpMsg := m.ToStrOpenAIMessage()
+// 		msgs = append(msgs, tmpMsg)
+// 	}
+
+// 	return OpenAIRequest[string]{
+// 		Model:       r.Model,
+// 		Messages:    msgs,
+// 		Stream:      r.Stream,
+// 		Temperature: r.Temperature,
+// 	}
+// }
+
+// func GetStrOpenAIMessage()
 
 func (r OpenAIRequest) ToRayChatRequest(a *auth.RaycastAuth) RayChatRequest {
 	messages := make([]RayChatMessage, 0, len(r.Messages))
@@ -37,6 +53,9 @@ func (r OpenAIRequest) ToRayChatRequest(a *auth.RaycastAuth) RayChatRequest {
 			if err != nil {
 				continue
 			}
+		}
+		if tmpMsg.GetRole() == "system" {
+			continue
 		}
 
 		messages = append(messages, tmpMsg.ToRayChatMessage())
@@ -53,15 +72,13 @@ func (r OpenAIRequest) ToRayChatRequest(a *auth.RaycastAuth) RayChatRequest {
 		Provider:          provider,
 		Model:             model,
 		Temperature:       r.Temperature,
-		SystemInstruction: "markdown", // 或者根据需要设置
+		SystemInstruction: "markdown",
 		Messages:          messages,
 	}
 
-	// 直接使用 r.SystemPrompt
-	if r.SystemPrompt != "" {
-		resp.AdditionalSystemInstructions = r.SystemPrompt
-		// 或者, 如果 Raycast 使用 SystemInstruction 字段:
-		// resp.SystemInstruction = r.SystemPrompt
+	additionalSystemInstructions := r.GetSystemMessage().Content
+	if additionalSystemInstructions != "" {
+		resp.AdditionalSystemInstructions = additionalSystemInstructions
 	}
 
 	return resp
@@ -83,18 +100,18 @@ func (r OpenAIRequest) GetRequestModel(a *auth.RaycastAuth) (string, string) {
 	return model, models[model]
 }
 
-// func (r OpenAIRequest) GetSystemMessage() OpenAIStrMessage {
-// 	additionalSystem := ""
-// 	for _, m := range r.messages {
-// 		if m.GetRole() == "system" {
-// 			additionalSystem = m.GetContent()
-// 		}
-// 	}
-// 	return OpenAIStrMessage{
-// 		Role:    "system",
-// 		Content: additionalSystem,
-// 	}
-// }
+func (r OpenAIRequest) GetSystemMessage() OpenAIStrMessage {
+	additionalSystem := ""
+	for _, m := range r.messages {
+		if m.GetRole() == "system" {
+			additionalSystem = m.GetContent()
+		}
+	}
+	return OpenAIStrMessage{
+		Role:    "system",
+		Content: additionalSystem,
+	}
+}
 
 func (r OpenAIRequest) GetNoneSystemMessage() []UnTypedOpenAIMessage {
 	msgs := []UnTypedOpenAIMessage{}
