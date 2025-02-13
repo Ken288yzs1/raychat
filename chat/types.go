@@ -2,9 +2,9 @@ package chat
 
 import (
 	"encoding/json"
-	"fmt"
 	"raychat/auth"
 	"strings"
+	"time"
 
 	"github.com/samber/lo"
 )
@@ -16,44 +16,33 @@ type UnTypedOpenAIMessage interface {
 }
 
 type OpenAIRequest struct {
-	Model       string                 `json:"model"`
-	Messages    []interface{}          `json:"messages"`
-	Stream      bool                   `json:"stream"`
-	Temperature float64                `json:"temperature"`
-	messages    []UnTypedOpenAIMessage `json:"-"` // 内部使用，不直接参与 JSON 序列化
+	Model        string                 `json:"model"`
+	Messages     []interface{}          `json:"messages"`
+	Stream       bool                   `json:"stream"`
+	Temperature  float64                `json:"temperature"`
+	SystemPrompt string                 `json:"system_prompt,omitempty"` // 新增字段
+	messages     []UnTypedOpenAIMessage `json:"-"`
 }
 
-func (r *OpenAIRequest) ToRayChatRequest(a *auth.RaycastAuth) RayChatRequest {
+func (r OpenAIRequest) ToRayChatRequest(a *auth.RaycastAuth) RayChatRequest {
 	messages := make([]RayChatMessage, 0, len(r.Messages))
-	var systemInstructions []string // 用于收集所有系统消息的内容
-
 	for _, m := range r.Messages {
 		var (
 			tmpMsg UnTypedOpenAIMessage
 			err    error
 		)
-
-		// 尝试解析为 OpenAIStrMessage 或 OpenAIPartedMessage
 		tmpMsg, err = BuildOpenAIStrMessage(m)
 		if err != nil {
 			tmpMsg, err = BuildOpenAIPartedMessage(m)
 			if err != nil {
-				// 如果两种类型都无法解析，记录错误并跳过
-				// 可以选择 panic 或返回错误，这里选择记录并继续
-				fmt.Printf("Error parsing message: %v\n", err)
 				continue
 			}
 		}
-		//将所有的系统提示的内容都加入到systemInstructions中
-		if tmpMsg.GetRole() == "system" {
-			systemInstructions = append(systemInstructions, tmpMsg.GetContent())
-		}
+
 		messages = append(messages, tmpMsg.ToRayChatMessage())
-
 	}
-
 	if r.Temperature == 0 {
-		r.Temperature = 1 // 默认温度值
+		r.Temperature = 1
 	}
 
 	model, provider := r.GetRequestModel(a)
@@ -64,17 +53,20 @@ func (r *OpenAIRequest) ToRayChatRequest(a *auth.RaycastAuth) RayChatRequest {
 		Provider:          provider,
 		Model:             model,
 		Temperature:       r.Temperature,
-		SystemInstruction: "markdown", // 保留原有的 system_instruction
+		SystemInstruction: "markdown", // 或者根据需要设置
 		Messages:          messages,
 	}
-     //合并所有的系统消息
-	if len(systemInstructions) > 0 {
-		resp.AdditionalSystemInstructions = strings.Join(systemInstructions, "\n\n") // 使用换行符连接多个系统消息
+
+	// 直接使用 r.SystemPrompt
+	if r.SystemPrompt != "" {
+		resp.AdditionalSystemInstructions = r.SystemPrompt
+		// 或者, 如果 Raycast 使用 SystemInstruction 字段:
+		// resp.SystemInstruction = r.SystemPrompt
 	}
 
 	return resp
 }
-// GetRequestModel 函数保持不变
+
 func (r OpenAIRequest) GetRequestModel(a *auth.RaycastAuth) (string, string) {
 	model := r.Model
 	supporedModels := lo.Keys(models)
@@ -91,35 +83,27 @@ func (r OpenAIRequest) GetRequestModel(a *auth.RaycastAuth) (string, string) {
 	return model, models[model]
 }
 
-// 移除 GetSystemMessage 方法，不再需要单独提取
+// func (r OpenAIRequest) GetSystemMessage() OpenAIStrMessage {
+// 	additionalSystem := ""
+// 	for _, m := range r.messages {
+// 		if m.GetRole() == "system" {
+// 			additionalSystem = m.GetContent()
+// 		}
+// 	}
+// 	return OpenAIStrMessage{
+// 		Role:    "system",
+// 		Content: additionalSystem,
+// 	}
+// }
 
-// 其余结构体和方法保持不变 (RayChatRequest, RayChatMessage, OpenAIStrMessage, OpenAIPartedMessage 等)
-
-// 辅助函数 (BuildOpenAIStrMessage, BuildOpenAIPartedMessage) 也保持不变
-func BuildOpenAIStrMessage(origin interface{}) (UnTypedOpenAIMessage, error) {
-	raw, err := json.Marshal(origin)
-	if err != nil {
-		return OpenAIStrMessage{}, err
+func (r OpenAIRequest) GetNoneSystemMessage() []UnTypedOpenAIMessage {
+	msgs := []UnTypedOpenAIMessage{}
+	for _, m := range r.messages {
+		if m.GetRole() != "system" {
+			msgs = append(msgs, m)
+		}
 	}
-	var message OpenAIStrMessage
-	err = json.Unmarshal(raw, &message)
-	if err != nil {
-		return OpenAIStrMessage{}, err
-	}
-	return message, nil
-}
-
-func BuildOpenAIPartedMessage(origin interface{}) (UnTypedOpenAIMessage, error) {
-	raw, err := json.Marshal(origin)
-	if err != nil {
-		return OpenAIPartedMessage{}, err
-	}
-	var message OpenAIPartedMessage
-	err = json.Unmarshal(raw, &message)
-	if err != nil {
-		return OpenAIPartedMessage{}, err
-	}
-	return message, nil
+	return msgs
 }
 
 type RayChatRequest struct {
@@ -391,22 +375,28 @@ type ModelInfo struct {
 	} `json:"capabilities,omitempty"`
 }
 
-//import "C"
-import (
-	"crypto/rand"
-	"math/big"
-)
-
-var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
-func generateRandomString(n int) string {
-	b := make([]rune, n)
-	for i := range b {
-		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
-		if err != nil {
-			panic(err) // Handle error appropriately, maybe return "" and log
-		}
-		b[i] = letters[num.Int64()]
+func BuildOpenAIStrMessage(origin interface{}) (UnTypedOpenAIMessage, error) {
+	raw, err := json.Marshal(origin)
+	if err != nil {
+		return OpenAIStrMessage{}, err
 	}
-	return string(b)
+	var message OpenAIStrMessage
+	err = json.Unmarshal(raw, &message)
+	if err != nil {
+		return OpenAIStrMessage{}, err
+	}
+	return message, nil
+}
+
+func BuildOpenAIPartedMessage(origin interface{}) (UnTypedOpenAIMessage, error) {
+	raw, err := json.Marshal(origin)
+	if err != nil {
+		return OpenAIPartedMessage{}, err
+	}
+	var message OpenAIPartedMessage
+	err = json.Unmarshal(raw, &message)
+	if err != nil {
+		return OpenAIPartedMessage{}, err
+	}
+	return message, nil
 }
