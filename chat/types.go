@@ -23,27 +23,22 @@ type OpenAIRequest struct {
 	messages    []UnTypedOpenAIMessage `json:"-"`
 }
 
-// 修改后的 GetSystemMessage，用于连接所有系统消息内容
-func (r OpenAIRequest) GetSystemMessage() string {
-	additionalSystem := ""
-	for _, m := range r.Messages { // 直接遍历 r.Messages
-		var (
-			tmpMsg UnTypedOpenAIMessage
-			err    error
-		)
-		tmpMsg, err = BuildOpenAIStrMessage(m)
-		if err != nil {
-			tmpMsg, err = BuildOpenAIPartedMessage(m)
-			if err != nil {
-				continue
-			}
-		}
-		if tmpMsg.GetRole() == "system" {
-			additionalSystem += tmpMsg.GetContent() + "\n" // 添加换行符以分隔
-		}
-	}
-	return additionalSystem
-}
+// func (r OpenAIRequest) ToStrOpenAIRequest() OpenAIRequest[string] {
+// 	msgs := make([]OpenAIMessage[string], 0, len(r.Messages))
+// 	for _, m := range r.Messages {
+// 		tmpMsg := m.ToStrOpenAIMessage()
+// 		msgs = append(msgs, tmpMsg)
+// 	}
+
+// 	return OpenAIRequest[string]{
+// 		Model:       r.Model,
+// 		Messages:    msgs,
+// 		Stream:      r.Stream,
+// 		Temperature: r.Temperature,
+// 	}
+// }
+
+// func GetStrOpenAIMessage()
 
 func (r OpenAIRequest) ToRayChatRequest(a *auth.RaycastAuth) RayChatRequest {
 	messages := make([]RayChatMessage, 0, len(r.Messages))
@@ -60,7 +55,7 @@ func (r OpenAIRequest) ToRayChatRequest(a *auth.RaycastAuth) RayChatRequest {
 			}
 		}
 		if tmpMsg.GetRole() == "system" {
-			continue // 跳过 system 消息，因为它们已经被合并
+			continue
 		}
 
 		messages = append(messages, tmpMsg.ToRayChatMessage())
@@ -79,10 +74,9 @@ func (r OpenAIRequest) ToRayChatRequest(a *auth.RaycastAuth) RayChatRequest {
 		Temperature:       r.Temperature,
 		SystemInstruction: "markdown",
 		Messages:          messages,
-		//CurrentDate:       time.Now().Format(time.RFC3339), // 可以选择添加当前时间
 	}
 
-	additionalSystemInstructions := r.GetSystemMessage() // 获取合并后的系统消息
+	additionalSystemInstructions := r.GetSystemMessage().Content
 	if additionalSystemInstructions != "" {
 		resp.AdditionalSystemInstructions = additionalSystemInstructions
 	}
@@ -90,7 +84,6 @@ func (r OpenAIRequest) ToRayChatRequest(a *auth.RaycastAuth) RayChatRequest {
 	return resp
 }
 
-// 其余类型定义保持不变... (以下代码与之前相同)
 func (r OpenAIRequest) GetRequestModel(a *auth.RaycastAuth) (string, string) {
 	model := r.Model
 	supporedModels := lo.Keys(models)
@@ -107,8 +100,28 @@ func (r OpenAIRequest) GetRequestModel(a *auth.RaycastAuth) (string, string) {
 	return model, models[model]
 }
 
-// ... (省略了与之前版本相同的代码) ...
-// 之前的类型定义和函数定义保持不变
+func (r OpenAIRequest) GetSystemMessage() OpenAIStrMessage {
+	additionalSystem := ""
+	for _, m := range r.messages {
+		if m.GetRole() == "system" {
+			additionalSystem = m.GetContent()
+		}
+	}
+	return OpenAIStrMessage{
+		Role:    "system",
+		Content: additionalSystem,
+	}
+}
+
+func (r OpenAIRequest) GetNoneSystemMessage() []UnTypedOpenAIMessage {
+	msgs := []UnTypedOpenAIMessage{}
+	for _, m := range r.messages {
+		if m.GetRole() != "system" {
+			msgs = append(msgs, m)
+		}
+	}
+	return msgs
+}
 
 type RayChatRequest struct {
 	Debug                        bool             `json:"debug"`
@@ -120,7 +133,6 @@ type RayChatRequest struct {
 	Temperature                  float64          `json:"temperature"`
 	SystemInstruction            string           `json:"system_instruction"`
 	AdditionalSystemInstructions string           `json:"additional_system_instructions,omitempty"`
-    //CurrentDate                 string          `json:"current_date"`
 }
 
 type Content struct {
@@ -405,5 +417,3 @@ func BuildOpenAIPartedMessage(origin interface{}) (UnTypedOpenAIMessage, error) 
 	}
 	return message, nil
 }
-
-var models = map[string]string{} // 假设你有一个 models map
