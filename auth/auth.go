@@ -124,7 +124,7 @@ func (r *RaycastAuth) stepFive(redirUrl, clientID, clientSecret string) StepFive
 	}
 
 	var resp StepFiveResponse
-	cli := req.C().SetUserAgent("Raycast/1.91.2 (macOS Version 14.4 (Build 23E214))")
+	cli := req.C().SetUserAgent("Raycast/0 CFNetwork/1408.0.4 Darwin/22.5.0")
 	rawResp, err := cli.R().SetSuccessResult(&resp).
 		SetHeaders(map[string]string{
 			"Content-Type":    "application/x-www-form-urlencoded",
